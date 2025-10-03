@@ -37,8 +37,12 @@ Interactive (prompts):
 
 Flow in interactive mode:
 - If `NETWORK` is not provided via env, you'll be asked to choose it first
+- The script probes the (computed or overridden) snapshot URLs for their compressed sizes and shows:
+	- Individual node + MDW archive sizes
+	- Combined size and a recommended free space = 2.5x compressed total
 - You'll be asked once whether to download both snapshots (node + MDW)
-- If no tarball URLs are provided via env, they will be computed from the chosen `NETWORK` (and `DB_VARIANT` for the node)
+- If you answer No you can supply local existing `.tar.zst` archive paths for node and/or MDW instead of downloading
+- If no tarball URLs are provided via env, they are computed from the chosen `NETWORK` (and `DB_VARIANT` for the node)
 
 Non-interactive (via ENV):
 ```
@@ -68,6 +72,7 @@ Environment variables (optional unless noted):
 - `INSTALL_DIR` Local install directory (default: current working directory)
 - `TARBALL_URL` Custom URL to the node `.tar.zst` archive (optional). If not provided, it's computed from `NETWORK` + `DB_VARIANT`.
 - `MDW_TARBALL_URL` Custom URL to the MDW `.tar.zst` archive (optional). If not provided, it's computed from `NETWORK`.
+- For both `TARBALL_URL` and `MDW_TARBALL_URL`, if you set them to a local file path (no `http(s)` / `s3://` prefix), the script will not download and will directly extract that archive.
 - `AETERNITY_YAML_URL` URL to `aeternity.yaml` (optional; if omitted defaults to the official GitHub template)
 - `COMPOSE_URL` URL to `docker-compose.yml` (optional; if omitted defaults to the official GitHub template)
 - `.env` file will include: `HOST_DATA_ROOT`, `HOST_APP_ROOT`, `ELIXIR_ERL_OPTIONS`, `LOG_FILE_PATH`
@@ -90,3 +95,5 @@ If you use `docker-compose` binary, replace `docker compose` with `docker-compos
 	- `INSTALL_DIR/app/<network>/aeternity.yaml` and `INSTALL_DIR/app/<network>/log`
 - If your `tar` doesn't support zstd, ensure `unzstd` is installed (`zstd` package).
 - If you restore from a snapshot it might take a while to sync to the latest block.
+- When declining downloads in interactive mode, you can provide local snapshot paths for extraction.
+- The script estimates required space (2.5x combined compressed size) but does not yet automatically check free disk space.

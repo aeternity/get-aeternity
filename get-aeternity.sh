@@ -170,6 +170,12 @@ download() {
   fi
 }
 
+# Determine whether a string is a remote URL (http/https/s3)
+is_remote_url() {
+  local u="$1"
+  [[ "$u" =~ ^(https?|s3):// ]]
+}
+
 # Retrieve content length (bytes) of a remote URL using HEAD; returns empty on failure
 get_content_length() {
   local url="$1" headers="" cl=""
@@ -357,6 +363,31 @@ main() {
       if [[ -z "$MDW_TARBALL_URL_FROM_ENV" ]]; then
         MDW_TARBALL_URL="$_candidate_mdw_url"
       fi
+
+      # Offer using local archives instead of remote downloads
+      echo
+      info "You chose not to download. You can optionally supply existing local snapshot archives to extract."
+      local local_node local_mdw
+      read -r -p "Path to local NODE archive (.tar.zst) (leave empty to skip): " local_node || true
+      if [[ -n "$local_node" ]]; then
+        if [[ -f "$local_node" ]]; then
+          TARBALL_URL="$local_node"
+          DOWNLOAD_NODE_DB=true
+          info "Will use local node archive: $local_node"
+        else
+          warn "Local node archive not found: $local_node (skipping node extraction)."
+        fi
+      fi
+      read -r -p "Path to local MDW archive (.tar.zst) (leave empty to skip): " local_mdw || true
+      if [[ -n "$local_mdw" ]]; then
+        if [[ -f "$local_mdw" ]]; then
+          MDW_TARBALL_URL="$local_mdw"
+          DOWNLOAD_MDW_DB=true
+          info "Will use local MDW archive: $local_mdw"
+        else
+          warn "Local MDW archive not found: $local_mdw (skipping MDW extraction)."
+        fi
+      fi
     fi
   fi
 
@@ -399,30 +430,42 @@ main() {
   # Prepare host directories
   mkdir -p "$HOST_DATA_ROOT/mnesia" "$HOST_DATA_ROOT/mdw.db" "$HOST_APP_ROOT/log"
 
-  # Node DB
-  if [[ "$DOWNLOAD_NODE_DB" == true ]]; then
-    local tar_name
-    tar_name="$(basename "$TARBALL_URL")"
-    local tar_path="$downloads_dir/$tar_name"
-    info "Downloading node archive ..."
-    download "$TARBALL_URL" "$tar_path"
+  # Node DB (remote or local)
+  if [[ "$DOWNLOAD_NODE_DB" == true && -n "$TARBALL_URL" ]]; then
+    local node_archive_path
+    if is_remote_url "$TARBALL_URL"; then
+      local tar_name
+      tar_name="$(basename "$TARBALL_URL")"
+      node_archive_path="$downloads_dir/$tar_name"
+      info "Downloading node archive ..."
+      download "$TARBALL_URL" "$node_archive_path"
+    else
+      node_archive_path="$TARBALL_URL"
+      info "Using local node archive: $node_archive_path"
+    fi
     info "Extracting node archive ..."
-    extract_tar_zst "$tar_path" "$HOST_DATA_ROOT"
+    extract_tar_zst "$node_archive_path" "$HOST_DATA_ROOT"
   else
-    info "Skipping node DB download."
+    info "Skipping node DB extraction."
   fi
 
-  # MDW DB
+  # MDW DB (remote or local)
   if [[ "$DOWNLOAD_MDW_DB" == true && -n "$MDW_TARBALL_URL" ]]; then
-    local mdw_tar_name mdw_tar_path
-    mdw_tar_name="$(basename "$MDW_TARBALL_URL")"
-    mdw_tar_path="$downloads_dir/$mdw_tar_name"
-    info "Downloading MDW archive ..."
-    download "$MDW_TARBALL_URL" "$mdw_tar_path"
+    local mdw_archive_path
+    if is_remote_url "$MDW_TARBALL_URL"; then
+      local mdw_tar_name
+      mdw_tar_name="$(basename "$MDW_TARBALL_URL")"
+      mdw_archive_path="$downloads_dir/$mdw_tar_name"
+      info "Downloading MDW archive ..."
+      download "$MDW_TARBALL_URL" "$mdw_archive_path"
+    else
+      mdw_archive_path="$MDW_TARBALL_URL"
+      info "Using local MDW archive: $mdw_archive_path"
+    fi
     info "Extracting MDW archive ..."
-    extract_tar_zst "$mdw_tar_path" "$HOST_DATA_ROOT"
+    extract_tar_zst "$mdw_archive_path" "$HOST_DATA_ROOT"
   else
-    info "Skipping MDW DB download."
+    info "Skipping MDW DB extraction."
   fi
 
   local compose_path="$INSTALL_DIR/docker-compose.yml"
