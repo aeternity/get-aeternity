@@ -1,0 +1,28 @@
+version: "3.8"
+services:
+  ae_mdw:
+    image: "aeternity/ae_mdw:latest"
+    container_name: "ae_mdw"
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "30"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "localhost:4000/status"]
+      interval: 1m
+      timeout: 50s
+      retries: 3
+    ports:
+      - "4000:4000"
+      - "4001:4001"
+      - "3113:3113"
+      - "3013:3013"
+      - "3014:3014"
+    environment:
+      - ELIXIR_ERL_OPTIONS=${ELIXIR_ERL_OPTIONS}
+      - LOG_FILE_PATH=${LOG_FILE_PATH}
+    volumes:
+      - "${HOST_DATA_ROOT:-.}/mnesia:/home/aeternity/node/data/mnesia"
+      - "${HOST_DATA_ROOT:-.}/mdw.db:/home/aeternity/node/data/mdw.db"
+      - "${HOST_APP_ROOT:-.}/aeternity.yaml:/home/aeternity/.aeternity/aeternity/aeternity.yaml"
+      - "${HOST_APP_ROOT:-.}/log:/home/aeternity/ae_mdw/log"
