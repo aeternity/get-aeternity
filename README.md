@@ -62,6 +62,7 @@ NETWORK=mainnet \
 Flags:
 - `-y|--yes|--non-interactive` Run without prompts, using ENV/defaults
 - `--no-start` Do not start the service after setup
+- `--dry-run` Show what would be done without downloading, extracting, writing files, or starting services
 - `-h|--help` Show help
 
 Environment variables (optional unless noted):
@@ -97,3 +98,4 @@ If you use `docker-compose` binary, replace `docker compose` with `docker-compos
 - If you restore from a snapshot it might take a while to sync to the latest block.
 - When declining downloads in interactive mode, you can provide local snapshot paths for extraction.
 - The script estimates required space (2.5x combined compressed size) but does not yet automatically check free disk space.
+- `--dry-run` can be used to review actions and computed URLs (including size probe) without making any changes.

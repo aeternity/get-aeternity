@@ -48,6 +48,7 @@ Convenience installer for Aeternity node using Docker Compose.
 Options:
   -y, --yes, --non-interactive  Run without prompts, using ENV/defaults
       --no-start                Do not start the compose service after setup
+      --dry-run                 Show actions without making changes (no downloads, no writes)
   -h, --help                    Show this help and exit
 
 Environment variables:
@@ -59,11 +60,14 @@ EOF
 
 NON_INTERACTIVE=false
 START_AFTER=true
+DRY_RUN=false
 
 while [[ ${1:-} ]]; do
   case "$1" in
     -y|--yes|--non-interactive)
       NON_INTERACTIVE=true; shift ;;
+    --dry-run)
+      DRY_RUN=true; shift ;;
     --no-start)
       START_AFTER=false; shift ;;
     -h|--help)
@@ -160,10 +164,22 @@ compute_mdw_tarball_url() {
 
 download() {
   local url="$1" out="$2"
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[dry-run] Would download: $url -> $out"
+    return 0
+  fi
   if have_cmd curl; then
-    curl -fsSL "$url" -o "$out"
+    if [[ -t 1 ]]; then
+      curl -fSL --progress-bar "$url" -o "$out"
+    else
+      curl -fsSL "$url" -o "$out"
+    fi
   elif have_cmd wget; then
-    wget -qO "$out" "$url"
+    if [[ -t 1 ]]; then
+      wget -O "$out" "$url"
+    else
+      wget -qO "$out" "$url"
+    fi
   else
     err "Neither curl nor wget found. Please install one."
     exit 1
@@ -237,6 +253,12 @@ confirm() {
 }
 
 ensure_prereqs() {
+  if [[ "$DRY_RUN" == true ]]; then
+    if ! have_cmd curl && ! have_cmd wget; then
+      warn "Dry-run: neither curl nor wget found; size probing may be skipped."
+    fi
+    return 0
+  fi
   need_cmd tar
   need_cmd docker
   detect_compose_cmd >/dev/null
@@ -249,10 +271,18 @@ ensure_prereqs() {
 
 extract_tar_zst() {
   local archive="$1" dest_dir="$2"
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[dry-run] Would extract: $archive -> $dest_dir"
+    return 0
+  fi
   mkdir -p "$dest_dir"
   if tar --help 2>/dev/null | grep -q "zstd"; then
     info "Extracting (tar --zstd) to $dest_dir ..."
-    tar --zstd -xf "$archive" -C "$dest_dir"
+    if have_cmd pv; then
+      pv "$archive" | tar --zstd -xf - -C "$dest_dir"
+    else
+      tar --zstd -xf "$archive" -C "$dest_dir"
+    fi
   else
     if have_cmd unzstd; then
       info "Decompressing with unzstd ..."
@@ -260,7 +290,11 @@ extract_tar_zst() {
       tmp_tar="${archive%.zst}"
       unzstd -f -q "$archive" -o "$tmp_tar"
       info "Extracting tar to $dest_dir ..."
-      tar -xf "$tmp_tar" -C "$dest_dir"
+      if have_cmd pv; then
+        pv "$tmp_tar" | tar -xf - -C "$dest_dir"
+      else
+        tar -xf "$tmp_tar" -C "$dest_dir"
+      fi
       rm -f "$tmp_tar"
     else
       err "Cannot extract: tar has no zstd support and 'unzstd' is not available. Install 'zstd' and retry."
@@ -404,6 +438,7 @@ main() {
   echo "  AETERNITY_YAML_URL    = $AETERNITY_YAML_URL"
   echo "  COMPOSE_URL           = $COMPOSE_URL"
   echo "  INSTALL_DIR           = $INSTALL_DIR"
+  echo "  DRY_RUN               = $DRY_RUN"
   # Service name is fixed by template; no legacy container path variables
   echo "  START_AFTER           = $START_AFTER"
 
@@ -411,9 +446,14 @@ main() {
     info "Aborted by user."; exit 0
   fi
 
-  mkdir -p "$INSTALL_DIR"
   local downloads_dir="$INSTALL_DIR/downloads"
-  mkdir -p "$downloads_dir"
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[dry-run] Would create directory: $INSTALL_DIR"
+    info "[dry-run] Would create directory: $downloads_dir"
+  else
+    mkdir -p "$INSTALL_DIR"
+    mkdir -p "$downloads_dir"
+  fi
 
   # Derive host network label for paths (mainnet|testnet)
   local HOST_NETWORK_LABEL
@@ -428,7 +468,11 @@ main() {
   local HOST_APP_ROOT="${HOST_APP_ROOT:-$HOST_APP_ROOT_DEFAULT}"
 
   # Prepare host directories
-  mkdir -p "$HOST_DATA_ROOT/mnesia" "$HOST_DATA_ROOT/mdw.db" "$HOST_APP_ROOT/log"
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[dry-run] Would create data directories under $HOST_DATA_ROOT and $HOST_APP_ROOT"
+  else
+    mkdir -p "$HOST_DATA_ROOT/mnesia" "$HOST_DATA_ROOT/mdw.db" "$HOST_APP_ROOT/log"
+  fi
 
   # Node DB (remote or local)
   if [[ "$DOWNLOAD_NODE_DB" == true && -n "$TARBALL_URL" ]]; then
@@ -479,13 +523,21 @@ main() {
     info "docker-compose.yml already exists; leaving it unchanged."
   else
     if [[ -n "$COMPOSE_URL" ]]; then
-      info "Downloading docker-compose.yml ..."
-      download "$COMPOSE_URL" "$compose_path"
+      if [[ "$DRY_RUN" == true ]]; then
+        info "[dry-run] Would download docker-compose.yml from $COMPOSE_URL"
+      else
+        info "Downloading docker-compose.yml ..."
+        download "$COMPOSE_URL" "$compose_path"
+      fi
     else
-      info "Copying docker-compose.yml from local template"
       local tpl_compose="$TEMPLATE_DIR_DEFAULT/docker-compose.yml"
-      if [[ ! -f "$tpl_compose" ]]; then err "Template not found: $tpl_compose"; exit 1; fi
-      cp "$tpl_compose" "$compose_path"
+      if [[ "$DRY_RUN" == true ]]; then
+        info "[dry-run] Would copy docker-compose.yml from $tpl_compose"
+      else
+        info "Copying docker-compose.yml from local template"
+        if [[ ! -f "$tpl_compose" ]]; then err "Template not found: $tpl_compose"; exit 1; fi
+        cp "$tpl_compose" "$compose_path"
+      fi
     fi
   fi
 
@@ -494,37 +546,64 @@ main() {
     info "aeternity.yaml already exists; leaving it unchanged."
   else
     if [[ -n "$AETERNITY_YAML_URL" ]]; then
-      info "Downloading aeternity.yaml ..."
-      download "$AETERNITY_YAML_URL" "$config_path"
+      if [[ "$DRY_RUN" == true ]]; then
+        info "[dry-run] Would download aeternity.yaml from $AETERNITY_YAML_URL"
+      else
+        info "Downloading aeternity.yaml ..."
+        download "$AETERNITY_YAML_URL" "$config_path"
+      fi
     else
-      info "Copying aeternity.yaml from local template"
       local tpl_ay="$TEMPLATE_DIR_DEFAULT/aeternity.yaml"
-      if [[ ! -f "$tpl_ay" ]]; then err "Template not found: $tpl_ay"; exit 1; fi
-      cp "$tpl_ay" "$config_path"
+      if [[ "$DRY_RUN" == true ]]; then
+        info "[dry-run] Would copy aeternity.yaml from $tpl_ay"
+      else
+        info "Copying aeternity.yaml from local template"
+        if [[ ! -f "$tpl_ay" ]]; then err "Template not found: $tpl_ay"; exit 1; fi
+        cp "$tpl_ay" "$config_path"
+      fi
     fi
   fi
 
   # Now patch the two unique lines based on NETWORK and DB_VARIANT
   if [[ "$(normalize_network "$NETWORK")" == "mainnet" ]]; then
     # Replace ae_uat -> ae_mainnet on the exact network_id line
-    sed -i 's/^\(\s*network_id:\s*\)ae_uat$/\1ae_mainnet/' "$config_path"
+    if [[ "$DRY_RUN" == true ]]; then
+      info "[dry-run] Would set network_id to ae_mainnet in $config_path"
+    else
+      sed -i 's/^\(\s*network_id:\s*\)ae_uat$/\1ae_mainnet/' "$config_path"
+    fi
   else
     # Ensure ae_uat (default) remains if coming from custom yaml
-    sed -i 's/^\(\s*network_id:\s*\)ae_mainnet$/\1ae_uat/' "$config_path"
+    if [[ "$DRY_RUN" == true ]]; then
+      info "[dry-run] Would set network_id to ae_uat in $config_path"
+    else
+      sed -i 's/^\(\s*network_id:\s*\)ae_mainnet$/\1ae_uat/' "$config_path"
+    fi
   fi
 
   if [[ "$(normalize_variant "$DB_VARIANT")" == "full" ]]; then
-    sed -i 's/^\(\s*enabled:\s*\)false$/\1true/' "$config_path"
+    if [[ "$DRY_RUN" == true ]]; then
+      info "[dry-run] Would ensure pruning enabled:true in $config_path"
+    else
+      sed -i 's/^\(\s*enabled:\s*\)false$/\1true/' "$config_path"
+    fi
   else
-    sed -i 's/^\(\s*enabled:\s*\)true$/\1false/' "$config_path"
+    if [[ "$DRY_RUN" == true ]]; then
+      info "[dry-run] Would ensure pruning enabled:false in $config_path"
+    else
+      sed -i 's/^\(\s*enabled:\s*\)true$/\1false/' "$config_path"
+    fi
   fi
 
   # Compose environment variables (.env)
   local env_path="$INSTALL_DIR/.env"
   local elixir_opts_default="-sbwt none -sbwtdcpu none -sbwtdio none"
   local log_file_path_default="/home/aeternity/ae_mdw/log/info.log"
-  info "Writing compose .env at $env_path ..."
-  cat > "$env_path" <<ENV
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[dry-run] Would write .env file at $env_path"
+  else
+    info "Writing compose .env at $env_path ..."
+    cat > "$env_path" <<ENV
 # Generated by get-aeternity.sh
 HOST_NETWORK_LABEL=${HOST_NETWORK_LABEL}
 HOST_DATA_ROOT=${HOST_DATA_ROOT}
@@ -532,6 +611,7 @@ HOST_APP_ROOT=${HOST_APP_ROOT}
 ELIXIR_ERL_OPTIONS=${ELIXIR_OPTS:-$elixir_opts_default}
 LOG_FILE_PATH=${LOG_FILE_PATH:-$log_file_path_default}
 ENV
+  fi
 
   local compose_cmd
   compose_cmd="$(detect_compose_cmd)"
@@ -539,16 +619,28 @@ ENV
   info "Docker Compose files prepared:\n  - $compose_path\n  - $env_path"
 
   if [[ "$START_AFTER" == true ]]; then
-  info "Pulling latest images ..."
-    (cd "$INSTALL_DIR" && $compose_cmd pull)
-  info "Starting services ..."
-    (cd "$INSTALL_DIR" && $compose_cmd up -d)
-  info "Services started. Use: (cd '$INSTALL_DIR' && $compose_cmd ps)"
+    if [[ "$DRY_RUN" == true ]]; then
+      info "[dry-run] Would pull latest images and start services (docker compose up -d)"
+    else
+      info "Pulling latest images ..."
+      (cd "$INSTALL_DIR" && $compose_cmd pull)
+      info "Starting services ..."
+      (cd "$INSTALL_DIR" && $compose_cmd up -d)
+      info "Services started. Use: (cd '$INSTALL_DIR' && $compose_cmd ps)"
+    fi
   else
-    info "Skipping start. To run later: (cd '$INSTALL_DIR' && $(detect_compose_cmd) up -d)"
+    if [[ "$DRY_RUN" == true ]]; then
+      info "[dry-run] Would skip start (user chose --no-start)"
+    else
+      info "Skipping start. To run later: (cd '$INSTALL_DIR' && $(detect_compose_cmd) up -d)"
+    fi
   fi
 
-  info "Done. Data dir: $HOST_DATA_ROOT | App dir: $HOST_APP_ROOT"
+  if [[ "$DRY_RUN" == true ]]; then
+    info "Dry-run complete. No changes were made."
+  else
+    info "Done. Data dir: $HOST_DATA_ROOT | App dir: $HOST_APP_ROOT"
+  fi
 }
 
 main "$@"
